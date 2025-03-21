@@ -1,24 +1,33 @@
-let scenes = [];
 let mSerial;
-let readyToReceive = false;
-let connectButton; // 连接 Arduino 的按钮
+let connectButton;
+let readyToReceive = true;
+let lastRequestTime = 0;
+let requestInterval = 100;
 
-// 传感器数据
-let distance1 = 0;
-let distance2 = 0;
-let showSensorData = false; // **默认隐藏传感器数据**
+let scenes = [];
+let button1Pressed = false;
+let button2Pressed = false;
 
-// 左右两侧的媒体文件
 let media = [
-  { img: "chap1S.jpg", video: "chap1V.mp4" }, // 左侧
-  { img: "chap2S.jpg", video: "chap2V.mp4" }  // 右侧
+  { img: "chap1S.jpg", video: "chap1V.mp4" },
+  { img: "chap2S.jpg", video: "chap2V.mp4" }
 ];
+
+// 提示相关变量
+let showPrompt = [false, false];
+let promptStartTime = [0, 0]; // 动画起始时间
+let promptDuration = 3000;    // 总显示时长
+let promptY = [0, 0];         // 当前 y 位置
+let promptState = ["idle", "idle"]; // idle | enter | hold | exit
+
+// 播放开始时间
+let playStartTime = [0, 0];
 
 function preload() {
   for (let i = 0; i < media.length; i++) {
     let vid = createVideo(media[i].video);
-    vid.hide(); // 隐藏 HTML 视频
-    vid.elt.muted = true; // 确保没有声音
+    vid.hide();
+    vid.elt.muted = true;
     scenes.push({
       img: loadImage(media[i].img),
       video: vid,
@@ -29,43 +38,35 @@ function preload() {
 
 function setup() {
   createCanvas(windowWidth, windowHeight);
-  mSerial = createSerial();
+  background(0);
 
-  // 创建 Arduino 连接按钮
+  mSerial = createSerial();
   connectButton = createButton("🔌 连接 Arduino");
   connectButton.position(20, 20);
   connectButton.mousePressed(connectToSerial);
 
-  console.log("等待串口连接...");
+  textAlign(CENTER, CENTER);
+  textSize(32);
 }
 
 function draw() {
   background(0);
+  let sceneWidth = width / 2;
+  let now = millis();
 
-  let sceneWidth = windowWidth / 2;
-  let sceneHeight = windowHeight;
-
-  // **遍历左右两个画面**
   for (let i = 0; i < scenes.length; i++) {
     let x = i * sceneWidth;
-    
-    if (scenes[i].playing) {
-      image(scenes[i].video, x, 0, sceneWidth, sceneHeight);
-    } else {
-      image(scenes[i].img, x, 0, sceneWidth, sceneHeight);
-    }
+    image(scenes[i].playing ? scenes[i].video : scenes[i].img, x, 0, sceneWidth, height);
+
+    // 更新提示状态
+    updatePrompt(i, now, sceneWidth);
   }
 
-  // **按 N 显示/隐藏传感器数据**
-  if (showSensorData) {
-    displaySensorData();
-  }
-
-  // **监听 Arduino 串口数据**
-  if (mSerial.opened() && readyToReceive) {
-    readyToReceive = false;
+  if (mSerial.opened() && readyToReceive && now - lastRequestTime > requestInterval) {
     mSerial.clear();
-    mSerial.write(0xab); // 发送请求数据
+    mSerial.write(0xAB);
+    lastRequestTime = now;
+    readyToReceive = false;
   }
 
   if (mSerial.availableBytes() > 0) {
@@ -73,29 +74,94 @@ function draw() {
   }
 }
 
-// **显示传感器数据**
-function displaySensorData() {
-  fill(255);
-  textSize(32);
-  textAlign(CENTER, TOP);
+function updatePrompt(index, now, sceneWidth) {
+  const animationTime = 300; // 滑入/滑出动画时间(ms)
+  let elapsed = now - promptStartTime[index];
+  let xCenter = index * sceneWidth + sceneWidth / 2;
+  let targetY = height - 50;
 
-  // **左侧传感器数据**
-  text(`传感器 1: ${distance1.toFixed(1)} cm`, width / 4, 20);
+  if (promptState[index] === "enter") {
+    let t = constrain(elapsed / animationTime, 0, 1);
+    promptY[index] = lerp(height + 50, targetY, t);
+    if (t >= 1) {
+      promptState[index] = "hold";
+    }
+  } else if (promptState[index] === "hold") {
+    promptY[index] = targetY;
+    if (elapsed > promptDuration - animationTime) {
+      promptState[index] = "exit";
+    }
+  } else if (promptState[index] === "exit") {
+    let t = constrain((elapsed - (promptDuration - animationTime)) / animationTime, 0, 1);
+    promptY[index] = lerp(targetY, height + 50, t);
+    if (t >= 1) {
+      promptState[index] = "idle";
+      showPrompt[index] = false;
+    }
+  }
 
-  // **右侧传感器数据**
-  text(`传感器 2: ${distance2.toFixed(1)} cm`, (3 * width) / 4, 20);
+  if (showPrompt[index]) {
+    noStroke();
+    fill(255, 0, 0, 180);
+    rectMode(CENTER);
+    rect(xCenter, promptY[index], 300, 80, 20);
+    fill(255);
+    text("please try later", xCenter, promptY[index]);
+  }
 }
 
-// **播放视频**
+function receiveSerial() {
+  let line = mSerial.readUntil("\n").trim();
+  if (!line) return;
+
+  try {
+    let json = JSON.parse(line);
+    let data = json.data;
+    button1Pressed = data.button1;
+    button2Pressed = data.button2;
+
+    if (button1Pressed) {
+      let now = millis();
+      if (scenes[0].playing) {
+        if (now - playStartTime[0] > 2000) {
+          triggerPrompt(0);
+        }
+      } else {
+        playScene(0);
+      }
+    }
+
+    if (button2Pressed) {
+      let now = millis();
+      if (scenes[1].playing) {
+        if (now - playStartTime[1] > 2000) {
+          triggerPrompt(1);
+        }
+      } else {
+        playScene(1);
+      }
+    }
+  } catch (e) {
+    console.error("❌ JSON 解析失败:", e, line);
+  }
+
+  readyToReceive = true;
+}
+
+function triggerPrompt(index) {
+  showPrompt[index] = true;
+  promptStartTime[index] = millis();
+  promptState[index] = "enter";
+}
+
 function playScene(index) {
   let scene = scenes[index];
-
   if (!scene.playing) {
     scene.playing = true;
-    scene.video.time(0); // 从头播放
+    scene.video.time(0);
     scene.video.play();
+    playStartTime[index] = millis();
 
-    // **视频播放完毕后，回到静态图片**
     scene.video.onended(() => {
       scene.playing = false;
       scene.video.hide();
@@ -103,72 +169,14 @@ function playScene(index) {
   }
 }
 
-// **解析串口数据**
-function receiveSerial() {
-  let line = mSerial.readUntil("\n");
-  trim(line);
-  if (!line) return;
-
-  console.log("接收到数据: ", line);
-
-  if (line.charAt(0) != "{") {
-    console.log("数据格式错误: ", line);
-    readyToReceive = true;
-    return;
-  }
-
-  let json;
-  try {
-    json = JSON.parse(line);
-  } catch (e) {
-    console.error("JSON 解析失败: ", e);
-    readyToReceive = true;
-    return;
-  }
-
-  let data = json.data;
-  console.log("解析后的数据: ", data);
-
-  // **更新传感器数据**
-  distance1 = data.distance1;
-  distance2 = data.distance2;
-
-  // **检测左侧传感器**
-  if (distance1 < 5) {
-    console.log("左侧触发视频");
-    playScene(0); // 播放左侧视频
-  }
-
-  // **检测右侧传感器**
-  if (distance2 < 5) {
-    console.log("右侧触发视频");
-    playScene(1); // 播放右侧视频
-  }
-
-  readyToReceive = true;
-}
-
-// **连接 Arduino**
 function connectToSerial() {
   if (!mSerial.opened()) {
     mSerial.open(9600);
     readyToReceive = true;
-    console.log("串口已连接");
-
-    // **移除按钮**
     connectButton.remove();
   }
 }
 
-// **按 N 键显示/隐藏传感器数据**
-function keyPressed() {
-  if (key === 'n' || key === 'N') {
-    showSensorData = !showSensorData;
-    console.log(`📡 传感器数据显示: ${showSensorData ? "显示" : "隐藏"}`);
-  }
-}
-
-// **窗口大小调整**
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
 }
