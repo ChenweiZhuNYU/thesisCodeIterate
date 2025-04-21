@@ -4,18 +4,18 @@
 #define BUTTON_1 9
 #define BUTTON_2 10
 
-// 绿灯引脚（红灯功能已移除）
+// 绿灯引脚
 #define GREEN_1 3
 #define GREEN_2 5
 
 // 继电器引脚
 #define RELAY_PIN 13
 
-// 视频时长（ms）
-const unsigned long VIDEO1_DURATION = 53000;
-const unsigned long VIDEO2_DURATION = 15000;
-const unsigned long RELAY_DELAY = 5000;
-const unsigned long RELAY_DURATION = 5000;
+// ⚠️ 视频和继电器定时（单位：毫秒）
+const unsigned long VIDEO1_DURATION = 90000;    // 1 分 30 秒
+const unsigned long VIDEO2_DURATION = 100000;   // 1 分 40 秒
+const unsigned long RELAY_DELAY     = 94000;    // 1 分 34 秒
+const unsigned long RELAY_DURATION  = 5000;     // 5 秒
 
 // 播放状态
 bool isPlaying1 = false;

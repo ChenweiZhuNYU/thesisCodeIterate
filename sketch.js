@@ -70,13 +70,8 @@ function receiveSerial() {
     button1Pressed = data.button1;
     button2Pressed = data.button2;
 
-    if (button1Pressed) {
-      playScene(0);
-    }
-
-    if (button2Pressed) {
-      playScene(1);
-    }
+    if (button1Pressed) playScene(0);
+    if (button2Pressed) playScene(1);
   } catch (e) {
     console.error("❌ JSON 解析失败:", e, line);
   }
