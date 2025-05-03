@@ -5,14 +5,18 @@ let lastRequestTime = 0;
 let requestInterval = 100;
 
 let scenes = [];
-let buttonStates = [false, false];
-let lastTrueTime = [0, 0];
-let resetCooldownUntil = [0, 0];
+let button1Pressed = false;
+let button2Pressed = false;
 
 let media = [
   { img: "chap1S.jpg", video: "chap1V.mp4" },
   { img: "chap2S.jpg", video: "chap2V.mp4" }
 ];
+
+// 断线警报逻辑
+let lastDataReceived = 0;
+let disconnected = false;
+const disconnectTimeout = 5000; // 5秒无响应则断线警告
 
 function preload() {
   for (let i = 0; i < media.length; i++) {
@@ -29,35 +33,52 @@ function preload() {
 
 function setup() {
   createCanvas(windowWidth, windowHeight);
+  background(0);
+
   mSerial = createSerial();
-  connectButton = createButton("\ud83d\udd0c \u8fde\u63a5 Arduino");
+  connectButton = createButton("🔌 连接 Arduino");
   connectButton.position(20, 20);
   connectButton.mousePressed(connectToSerial);
+
+  textAlign(CENTER, CENTER);
+  textSize(32);
+  lastDataReceived = millis();
 }
 
 function draw() {
   background(0);
   let sceneWidth = width / 2;
-  let now = millis();
 
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < scenes.length; i++) {
     let x = i * sceneWidth;
     image(scenes[i].playing ? scenes[i].video : scenes[i].img, x, 0, sceneWidth, height);
   }
 
-  // 每 100ms 发送请求
-  if (mSerial.opened() && readyToReceive && now - lastRequestTime > requestInterval) {
+  // 检查断线
+  if (millis() - lastDataReceived > disconnectTimeout) {
+    disconnected = true;
+  } else {
+    disconnected = false;
+  }
+
+  if (disconnected) {
+    fill(255, 0, 0, 180);
+    noStroke();
+    rect(0, height / 2 - 50, width, 100);
+    fill(0);
+    text("RESET NEEDED", width / 2, height / 2);
+  }
+
+  if (mSerial.opened() && readyToReceive && millis() - lastRequestTime > requestInterval) {
     mSerial.clear();
     mSerial.write(0xAB);
-    lastRequestTime = now;
+    lastRequestTime = millis();
     readyToReceive = false;
   }
 
   if (mSerial.availableBytes() > 0) {
     receiveSerial();
   }
-
-  checkResetLogic();
 }
 
 function receiveSerial() {
@@ -67,53 +88,18 @@ function receiveSerial() {
   try {
     let json = JSON.parse(line);
     let data = json.data;
+    button1Pressed = data.button1;
+    button2Pressed = data.button2;
 
-    for (let i = 0; i < 2; i++) {
-      if (data[`button${i + 1}`]) {
-        buttonStates[i] = true;
-        if (lastTrueTime[i] === 0) {
-          lastTrueTime[i] = millis();
-        }
-      } else {
-        buttonStates[i] = false;
-        lastTrueTime[i] = 0;
-      }
-    }
+    if (button1Pressed) playScene(0);
+    if (button2Pressed) playScene(1);
 
-    if (buttonStates[0] && !scenes[0].playing) playScene(0);
-    if (buttonStates[1] && !scenes[1].playing) playScene(1);
-
+    lastDataReceived = millis();
   } catch (e) {
-    console.error("\u274c JSON \u89e3\u6790\u5931\u8d25:", e, line);
+    console.error("\u274c JSON 解析失败:", e, line);
   }
+
   readyToReceive = true;
-}
-
-function checkResetLogic() {
-  let now = millis();
-
-  for (let i = 0; i < 2; i++) {
-    if (
-      buttonStates[i] &&
-      lastTrueTime[i] > 0 &&
-      now - lastTrueTime[i] > 5000 &&
-      now > resetCooldownUntil[i]
-    ) {
-      if (i === 0) {
-        // Reset all scenes
-        for (let s of scenes) {
-          s.playing = false;
-          s.video.stop();
-          s.video.hide();
-        }
-        console.log("\u267b\ufe0f Reset triggered by button 1");
-      } else if (i === 1) {
-        // Just log fallback trigger
-        console.log("\u26a1 Backup: button 2 long-press fallback");
-      }
-      resetCooldownUntil[i] = now + 3000;
-    }
-  }
 }
 
 function playScene(index) {
@@ -122,11 +108,29 @@ function playScene(index) {
     scene.playing = true;
     scene.video.time(0);
     scene.video.play();
+
     scene.video.onended(() => {
       scene.playing = false;
       scene.video.hide();
     });
   }
+}
+
+function stopScene(index) {
+  let scene = scenes[index];
+  if (scene.playing) {
+    scene.video.stop();
+    scene.playing = false;
+    scene.video.hide();
+  }
+}
+
+function keyPressed() {
+  if (key === '1') playScene(0);
+  if (key === '2') playScene(1);
+  if (key === 'q' || key === 'Q') stopScene(0);
+  if (key === 'w' || key === 'W') stopScene(1);
+  if (key === ' ') location.reload();
 }
 
 function connectToSerial() {
